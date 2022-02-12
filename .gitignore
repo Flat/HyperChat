@@ -29,3 +29,7 @@ pnpm-debug.log*
 *.zip
 artifacts
 .eslintcache
+
+# build artifacts
+web-ext-artifacts
+web-ext-artifacts/*
