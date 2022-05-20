@@ -1,9 +1,16 @@
 <script lang="ts">
+  import type { Theme } from '../ts/chat-constants';
+
   import TranslatedMessage from './TranslatedMessage.svelte';
+  import {
+    emojiRenderMode, useSystemEmojis
+  } from '../ts/storage';
+  import { YoutubeEmojiRenderMode } from '../ts/chat-constants';
 
   export let runs: Ytc.ParsedRun[];
   export let forceDark = false;
   export let deleted = false;
+  export let forceTLColor: Theme;
 
   let deletedClass = '';
 
@@ -17,7 +24,6 @@
 </script>
 
 <span
-  on:click|stopPropagation
   class="cursor-auto align-middle {deletedClass} {$$props.class ?? ''}"
   style="word-break: break-word"
 >
@@ -26,7 +32,7 @@
       {#if deleted}
         <span>{run.text}</span>
       {:else}
-        <TranslatedMessage text={run.text} {forceDark} />
+        <TranslatedMessage text={run.text} {forceTLColor} />
       {/if}
     {:else if run.type === 'link'}
       <a
@@ -36,18 +42,20 @@
       >
         {run.text}
       </a>
-    {:else if run.type === 'emoji' && run.standardEmoji}
-      <span
-        class="cursor-auto align-middle text-base"
-      >
-        {run.alt}
-      </span>
-    {:else if run.type === 'emoji' && run.src}
-      <img
-        class="h-5 w-5 inline mx-0.5 align-middle"
-        src={run.src}
-        alt={run.alt}
-      />
+    {:else if run.type === 'emoji' && $emojiRenderMode !== YoutubeEmojiRenderMode.HIDE_ALL}
+      {#if run.standardEmoji && $useSystemEmojis}
+        <span
+          class="cursor-auto align-middle text-base"
+        >
+          {run.alt}
+        </span>
+      {:else if run.src}
+        <img
+          class="h-5 w-5 inline mx-0.5 align-middle"
+          src={run.src}
+          alt={run.alt}
+        />
+      {/if}
     {/if}
   {/each}
 </span>

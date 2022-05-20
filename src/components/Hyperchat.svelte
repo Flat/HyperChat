@@ -7,21 +7,31 @@
   import PinnedMessage from './PinnedMessage.svelte';
   import PaidMessage from './PaidMessage.svelte';
   import MembershipItem from './MembershipItem.svelte';
+  import ReportBanDialog from './ReportBanDialog.svelte';
   import {
     paramsTabId,
     paramsFrameId,
     paramsIsReplay,
-    Theme
+    Theme,
+    YoutubeEmojiRenderMode,
+    chatUserActionsItems
   } from '../ts/chat-constants';
-  import { responseIsAction } from '../ts/chat-utils';
+  import { isAllEmoji, isChatMessage, isPrivileged, responseIsAction } from '../ts/chat-utils';
   import Button from 'smelte/src/components/Button';
   import {
     theme,
+    showOnlyMemberChat,
     showProfileIcons,
     showUsernames,
     showTimestamps,
     showUserBadges,
-    refreshScroll
+    refreshScroll,
+    emojiRenderMode,
+    useSystemEmojis,
+    hoveredItem,
+    port,
+    selfChannelId,
+    alertDialog
   } from '../ts/storage';
 
   const welcome = { welcome: true, message: { messageId: 'welcome' } };
@@ -33,11 +43,28 @@
   let pinned: Ytc.ParsedPinned | null;
   let div: HTMLElement;
   let isAtBottom = true;
-  let port: Chat.Port;
   let truncateInterval: number;
   const isReplay = paramsIsReplay;
   let ytDark = false;
   const smelteDark = dark();
+
+  type MessageBlocker = (a: Chat.MessageAction) => boolean;
+
+  const memberOnlyBlocker: MessageBlocker = (a) => (
+    $showOnlyMemberChat && isChatMessage(a) && !isPrivileged(a.message.author.types)
+  );
+
+  const emojiSpamBlocker: MessageBlocker = (a) => (
+    isChatMessage(a) &&
+    $emojiRenderMode !== YoutubeEmojiRenderMode.SHOW_ALL &&
+    isAllEmoji(a)
+  );
+
+  const messageBlockers = [memberOnlyBlocker, emojiSpamBlocker];
+
+  const shouldShowMessage = (m: Chat.MessageAction): boolean => (
+    !messageBlockers.some(blocker => blocker(m))
+  );
 
   const isWelcome = (m: Chat.MessageAction | Welcome): m is Welcome =>
     'welcome' in m;
@@ -65,10 +92,10 @@
     // On replays' initial data, only show messages with negative timestamp
     if (isInitial && isReplay) {
       messageActions.push(...messagesAction.messages.filter(
-        (a) => a.message.timestamp.startsWith('-')
+        (a) => a.message.timestamp.startsWith('-') && shouldShowMessage(a)
       ));
     } else {
-      messageActions.push(...messagesAction.messages);
+      messageActions.push(...messagesAction.messages.filter(shouldShowMessage));
     }
     if (!isInitial) checkTruncateMessages();
   };
@@ -111,7 +138,10 @@
         pinned = null;
         break;
       case 'forceUpdate':
-        messageActions = [...action.messages];
+        messageActions = [...action.messages].filter(shouldShowMessage);
+        if (action.showWelcome) {
+          messageActions = [...messageActions, welcome];
+        }
         break;
     }
   };
@@ -127,7 +157,6 @@
   };
 
   const onPortMessage = (response: Chat.BackgroundResponse) => {
-    // console.debug({ response });
     if (responseIsAction(response)) {
       onChatAction(response);
       return;
@@ -138,9 +167,28 @@
           onChatAction(action, true);
         });
         messageActions = [...messageActions, welcome];
+        $selfChannelId = response.selfChannelId;
         break;
       case 'themeUpdate':
         ytDark = response.dark;
+        break;
+      case 'chatUserActionResponse':
+        $alertDialog = {
+          title: response.success ? 'Success!' : 'Error',
+          message: chatUserActionsItems.find(v => v.value === response.action)
+            ?.messages[response.success ? 'success' : 'error'] ?? '',
+          color: response.success ? 'primary' : 'error'
+        };
+        if (response.success) {
+          messageActions = messageActions.filter(
+            (a) => {
+              if (isWelcome(a)) return true;
+              return a.message.author.id !== response.message.author.id;
+            }
+          );
+        }
+        break;
+      case 'registerClientResponse':
         break;
       default:
         console.error('Unknown payload type', { port, response });
@@ -161,15 +209,17 @@
       tabId: parseInt(paramsTabId),
       frameId: parseInt(paramsFrameId)
     };
-    port = chrome.runtime.connect();
-    port.onMessage.addListener(onPortMessage);
 
-    port.postMessage({
+    $port = chrome.runtime.connect();
+
+    $port?.onMessage.addListener(onPortMessage);
+
+    $port?.postMessage({
       type: 'registerClient',
       frameInfo,
       getInitialData: true
     });
-    port.postMessage({
+    $port?.postMessage({
       type: 'getTheme',
       frameInfo
     });
@@ -190,7 +240,7 @@
   afterUpdate(onRefresh);
 
   onDestroy(() => {
-    port.disconnect();
+    $port?.disconnect();
     if (truncateInterval) window.clearInterval(truncateInterval);
   });
 
@@ -201,27 +251,50 @@
   );
 
   const containerClass = 'h-screen w-screen text-black dark:text-white dark:bg-black dark:bg-opacity-25';
-  const contentClass = 'content absolute overflow-y-scroll w-full h-full flex-1';
   const pinnedClass = 'absolute top-2 inset-x-2';
+
+  const isSuperchat = (action: Chat.MessageAction) => (action.message.superChat || action.message.superSticker);
+  const isMembership = (action: Chat.MessageAction) => (action.message.membership);
+
+  $: $useSystemEmojis, onRefresh();
+
+  const setHover = (action: Chat.MessageAction | Welcome | null) => {
+    if (action == null) $hoveredItem = null;
+    else if (!('welcome' in action)) $hoveredItem = action.message.messageId;
+  };
 </script>
+
+<ReportBanDialog />
 
 <svelte:window on:resize={scrollToBottom} on:load={onLoad} />
 
 <div class={containerClass} style="font-size: 13px">
-  <div class={contentClass} bind:this={div} on:scroll={checkAtBottom}>
-    {#each messageActions as action (action.message.messageId)}
-      <div class={isWelcome(action) ? 'm-2' : 'p-1 m-1 hover-highlight flex rounded'}>
-        {#if isWelcome(action)}
-          <WelcomeMessage />
-        {:else if (action.message.superChat || action.message.superSticker)}
-          <PaidMessage message={action.message} />
-        {:else if action.message.membership}
-          <MembershipItem message={action.message} />
-        {:else}
-          <Message message={action.message} deleted={action.deleted} />
-        {/if}
-      </div>
-    {/each}
+  <div class="absolute w-full h-full flex justify-end flex-col">
+    <div bind:this={div} on:scroll={checkAtBottom} class="content overflow-y-scroll">
+      {#each messageActions as action (action.message.messageId)}
+        <div
+          class="{isWelcome(action) ? '' : 'flex'} hover-highlight p-1.5 w-full block"
+          on:mouseover={() => setHover(action)}
+          on:focus={() => setHover(action)}
+          on:mouseout={() => setHover(null)}
+          on:blur={() => setHover(null)}
+        >
+          {#if isWelcome(action)}
+            <WelcomeMessage />
+          {:else if isSuperchat(action)}
+            <PaidMessage message={action.message} />
+          {:else if isMembership(action)}
+            <MembershipItem message={action.message} />
+          {:else}
+            <Message
+              message={action.message}
+              deleted={action.deleted}
+              messageId={action.message.messageId}
+            />
+          {/if}
+        </div>
+      {/each}
+    </div>
   </div>
   {#if pinned}
     <div class={pinnedClass}>
@@ -256,7 +329,7 @@
     background: #555;
   }
   .hover-highlight {
-    transition: 0.1s;
+    /* transition: 0.1s; */
     background-color: transparent;
   }
   .hover-highlight:hover {

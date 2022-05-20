@@ -1,7 +1,7 @@
 import type { Unsubscriber } from '../ts/queue';
+import { ytcQueue } from '../ts/queue';
 import { isValidFrameInfo } from '../ts/chat-utils';
 import { isLiveTL } from '../ts/chat-constants';
-import { ytcQueue } from '../ts/queue';
 
 const interceptors: Chat.Interceptors[] = [];
 
@@ -62,6 +62,17 @@ const findInterceptorFromPort = (
   );
 };
 
+const findInterceptorFromClient = (
+  client: Chat.Port
+): Chat.Interceptor | undefined => {
+  return interceptors.find((interceptor) => {
+    for (const c of interceptor.clients) {
+      if (c.name === client.name) return true;
+    }
+    return false;
+  });
+};
+
 /**
  * If both port and clients are empty, removes interceptor from array.
  * Also runs the queue unsubscribe function.
@@ -70,7 +81,10 @@ const cleanupInterceptor = (i: number): void => {
   const interceptor = interceptors[i];
   if (!interceptor.port && interceptor.clients.length < 1) {
     console.debug('Removing empty interceptor', { interceptor, interceptors });
-    if (isYtcInterceptor(interceptor)) interceptor.queueUnsub?.();
+    if (isYtcInterceptor(interceptor)) {
+      interceptor.queue.cleanUp();
+      interceptor.queueUnsub?.();
+    }
     interceptors.splice(i, 1);
   }
 };
@@ -80,7 +94,11 @@ const cleanupInterceptor = (i: number): void => {
  * If an interceptor with the same FrameInfo already exists, its port will be
  * replaced with the given port instead.
  */
-const registerInterceptor = (port: Chat.Port, source: Chat.InterceptorSource, isReplay?: boolean): void => {
+const registerInterceptor = (
+  port: Chat.Port,
+  source: Chat.InterceptorSource,
+  isReplay?: boolean
+): void => {
   const frameInfo = getPortFrameInfo(port);
   if (!isValidFrameInfo(frameInfo, port)) return;
 
@@ -150,12 +168,28 @@ const registerClient = (
     frameInfo,
     { interceptors, port, frameInfo }
   );
-  if (!interceptor) return;
+  if (!interceptor) {
+    port.postMessage(
+      {
+        type: 'registerClientResponse',
+        success: false,
+        failReason: 'Interceptor not found'
+      }
+    );
+    return;
+  }
 
   if (interceptor.clients.some((client) => client.name === port.name)) {
     console.debug(
       'Client already registered. Not registering',
       { interceptors, port, frameInfo }
+    );
+    port.postMessage(
+      {
+        type: 'registerClientResponse',
+        success: false,
+        failReason: 'Client already registered'
+      }
     );
     return;
   }
@@ -181,12 +215,19 @@ const registerClient = (
   // Add client to array
   interceptor.clients.push(port);
   console.debug('Register client successful', { port, interceptor });
+  port.postMessage(
+    {
+      type: 'registerClientResponse',
+      success: true
+    }
+  );
 
   if (getInitialData && isYtcInterceptor(interceptor)) {
-    const payload = {
+    const payload: Chat.InitialData = {
       type: 'initialData',
-      initialData: interceptor.queue.getInitialData()
-    } as const;
+      initialData: interceptor.queue.getInitialData(),
+      selfChannelId: interceptor.queue.selfChannel.get()?.authorExternalChannelId ?? null
+    };
     port.postMessage(payload);
     console.debug('Sent initial data', { port, interceptor, payload });
   }
@@ -196,7 +237,7 @@ const registerClient = (
  * Parses the given YTC json response, and adds it to the queue of the
  * interceptor that sent it.
  */
-const processJson = (port: Chat.Port, message: Chat.JsonMsg): void => {
+const processMessageChunk = (port: Chat.Port, message: Chat.JsonMsg): void => {
   const json = message.json;
   const interceptor = findInterceptorFromPort(port, { message });
   if (!interceptor || !isYtcInterceptor(interceptor)) return;
@@ -210,8 +251,33 @@ const processJson = (port: Chat.Port, message: Chat.JsonMsg): void => {
 };
 
 /**
- * Parses the givevn YTC json response, and sets it as the initial data of
- * the interceptor that sent it.
+ * Parses a sent message and adds a fake message entry.
+ */
+const processSentMessage = (port: Chat.Port, message: Chat.JsonMsg): void => {
+  const json = message.json;
+  const interceptor = findInterceptorFromPort(port, { message });
+  if (!interceptor || !isYtcInterceptor(interceptor)) return;
+
+  const fakeJson: Ytc.SentChatItemAction = JSON.parse(json);
+  const fakeChunk: Ytc.RawResponse = {
+    continuationContents: {
+      liveChatContinuation: {
+        continuations: [{
+          timedContinuationData: {
+            timeoutMs: 0
+          }
+        }],
+        actions: fakeJson.actions
+      }
+    }
+  };
+  interceptor.queue.addJsonToQueue(JSON.stringify(
+    fakeChunk
+  ), false, interceptor, true);
+};
+
+/**
+ * Parses and sets initial message data and metadata.
  */
 const setInitialData = (port: Chat.Port, message: Chat.JsonMsg): void => {
   const json = message.json;
@@ -219,6 +285,22 @@ const setInitialData = (port: Chat.Port, message: Chat.JsonMsg): void => {
   if (!interceptor || !isYtcInterceptor(interceptor)) return;
 
   interceptor.queue.addJsonToQueue(json, true, interceptor);
+
+  const parsedJson = JSON.parse(json);
+
+  const actionPanel = (parsedJson?.continuationContents?.liveChatContinuation ||
+    parsedJson?.contents?.liveChatRenderer)
+    ?.actionPanel;
+
+  const user = actionPanel?.liveChatRestrictedParticipationRenderer
+    ? null
+    : actionPanel?.liveChatMessageInputRenderer
+      ?.sendButton?.buttonRenderer?.serviceEndpoint
+      ?.sendLiveChatMessageEndpoint?.actions[0]
+      ?.addLiveChatTextMessageFromTemplateAction?.template
+      ?.liveChatTextMessageRenderer;
+
+  interceptor.queue.selfChannel.set(user);
 };
 
 /**
@@ -269,6 +351,26 @@ const sendLtlMessage = (port: Chat.Port, message: Chat.LtlMessage): void => {
   );
 };
 
+const executeChatAction = (
+  port: Chat.Port,
+  message: Chat.executeChatActionMsg
+): void => {
+  const interceptor = findInterceptorFromClient(port);
+  interceptor?.port?.postMessage(message);
+};
+
+const sendChatUserActionResponse = (
+  port: Chat.Port,
+  message: Chat.chatUserActionResponse
+): void => {
+  const interceptor = findInterceptorFromPort(port, { message });
+  if (!interceptor) return;
+
+  interceptor.clients.forEach(
+    (clientPort) => clientPort.postMessage(message)
+  );
+};
+
 chrome.runtime.onConnect.addListener((port) => {
   port.onMessage.addListener((message: Chat.BackgroundMessage) => {
     switch (message.type) {
@@ -278,8 +380,11 @@ chrome.runtime.onConnect.addListener((port) => {
       case 'registerClient':
         registerClient(port, message.frameInfo, message.getInitialData);
         break;
-      case 'processJson':
-        processJson(port, message);
+      case 'processMessageChunk':
+        processMessageChunk(port, message);
+        break;
+      case 'processSentMessage':
+        processSentMessage(port, message);
         break;
       case 'setInitialData':
         setInitialData(port, message);
@@ -295,6 +400,12 @@ chrome.runtime.onConnect.addListener((port) => {
         break;
       case 'sendLtlMessage':
         sendLtlMessage(port, message.message);
+        break;
+      case 'executeChatAction':
+        executeChatAction(port, message);
+        break;
+      case 'chatUserActionResponse':
+        sendChatUserActionResponse(port, message);
         break;
       default:
         console.error('Unknown message type', port, message);

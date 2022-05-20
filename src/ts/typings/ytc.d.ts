@@ -59,6 +59,11 @@ declare namespace Ytc {
     videoOffsetTimeMsec: IntString;
   }
 
+  /* YTC sentChatItemAction object */
+  interface SentChatItemAction {
+    actions: Action[];
+  }
+
   /** YTC markChatItemsByAuthorAsDeletedAction object */
   interface AuthorBonkedAction extends IDeleted {
     /** ID of channel that was bonked */
@@ -136,6 +141,7 @@ declare namespace Ytc {
 
   interface TextMessageRenderer {
     message?: RunsObj;
+    authorExternalChannelId?: string;
     authorName?: SimpleTextObj;
     authorPhoto?: Thumbnails;
     authorBadges?: Array<{
@@ -161,6 +167,11 @@ declare namespace Ytc {
     authorExternalChannelId: string;
     /** Only available on replays */
     timestampText?: SimpleTextObj;
+    contextMenuEndpoint?: {
+      liveChatItemContextMenuEndpoint: {
+        params: string;
+      };
+    };
   }
 
   interface PaidRenderer extends TextMessageRenderer {
@@ -278,6 +289,7 @@ declare namespace Ytc {
       types: string[];
       profileIcon: ParsedImage;
       customBadge?: ParsedImage;
+      url?: string;
     };
     message: ParsedRun[];
     timestamp: string;
@@ -286,6 +298,7 @@ declare namespace Ytc {
     superChat?: ParsedSuperChat;
     superSticker?: ParsedSuperSticker;
     membership?: ParsedMembership;
+    params?: string;
   }
 
   interface ParsedBonk {

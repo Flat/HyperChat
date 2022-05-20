@@ -1,17 +1,26 @@
 <script lang="ts">
   import {
     theme,
+    showOnlyMemberChat,
     showProfileIcons,
     showTimestamps,
     showUsernames,
-    showUserBadges
+    showUserBadges,
+    emojiRenderMode,
+    autoLiveChat,
+    useSystemEmojis
   } from '../../ts/storage';
-  import { Theme, themeItems } from '../../ts/chat-constants';
+  import { Theme, themeItems, emojiRenderItems } from '../../ts/chat-constants';
   import Card from '../common/Card.svelte';
   import Radio from '../common/RadioGroupStore.svelte';
   import Checkbox from '../common/CheckboxStore.svelte';
+  import Icon from '../common/Icon.svelte';
   import dark from 'smelte/src/dark';
   import MessageTranslationSettings from './MessageTranslationSettings.svelte';
+
+  const willChangeOnNextChunkMessage = (
+    'Settings listed below will take effect when the next chat message chunk arrives.'
+  );
 
   const darkStore = dark();
   $: switch ($theme) {
@@ -37,7 +46,7 @@
   });
 </script>
 
-<Card title="General" icon="tune">
+<Card title="Appearance" icon="format_paint">
   <div class="flex items-center gap-2">
     <h6>Theme:</h6>
     <Radio store={theme} items={themeItems} />
@@ -51,4 +60,26 @@
   <Checkbox name="Show user badges" store={showUserBadges} />
 </Card>
 
-<MessageTranslationSettings />
+<Card title="Emojis" icon="emoji_emotions">
+  <Checkbox name="Use system emojis when possible" store={useSystemEmojis} />
+  <i>{willChangeOnNextChunkMessage}</i>
+  <Radio store={emojiRenderMode} items={emojiRenderItems} vertical />
+</Card>
+
+<Card title="Filters" icon="filter_list">
+  <i>{willChangeOnNextChunkMessage}</i>
+  <Checkbox name="Show only member chat messages" store={showOnlyMemberChat} />
+</Card>
+
+<Card title="Additional Options" icon="tune">
+  <a
+    href="https://myaccount.google.com/blocklist"
+    class="ml-2 dark:text-primary-50 text-primary-900"
+    target="_blank"
+  >
+    <span class="underline">Unblock chat users</span>
+    <Icon class="inline align-middle" small>open_in_new</Icon>
+  </a>
+  <Checkbox name="Automatically switch to Live Chat" store={autoLiveChat} />
+  <MessageTranslationSettings />
+</Card>

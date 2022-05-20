@@ -31,6 +31,7 @@ declare namespace Chat {
   interface ForceUpdate {
     type: 'forceUpdate';
     messages: MessageAction[];
+    showWelcome?: boolean;
   }
 
   type Actions = MessagesAction | BonkAction | DeleteAction | Ytc.ParsedMisc | PlayerProgressAction | ForceUpdate;
@@ -48,6 +49,7 @@ declare namespace Chat {
   interface InitialData {
     type: 'initialData';
     initialData: Actions[];
+    selfChannelId: string | null;
   }
 
   interface ThemeUpdate {
@@ -60,7 +62,22 @@ declare namespace Chat {
     message: LtlMessage;
   }
 
-  type BackgroundResponse = Actions | InitialData | ThemeUpdate | LtlMessageResponse;
+  interface registerClientResponse {
+    type: 'registerClientResponse';
+    success: boolean;
+    failReason?: string;
+  }
+
+  interface chatUserActionResponse {
+    type: 'chatUserActionResponse';
+    action: ChatUserActions;
+    message: Ytc.ParsedMessage;
+    success: boolean;
+  }
+
+  type BackgroundResponse =
+    Actions | InitialData | ThemeUpdate | LtlMessageResponse |
+    registerClientResponse | executeChatActionMsg | chatUserActionResponse;
 
   type InterceptorSource = 'ytc' | 'ltlMessage';
 
@@ -86,7 +103,7 @@ declare namespace Chat {
   }
 
   type processJsonMsg = JsonMsg & {
-    type: 'processJson';
+    type: 'processMessageChunk' | 'processSentMessage';
   };
 
   type setInitialDataMsg = JsonMsg & {
@@ -113,10 +130,17 @@ declare namespace Chat {
     message: LtlMessage;
   }
 
+  interface executeChatActionMsg {
+    type: 'executeChatAction';
+    message: Ytc.ParsedMessage;
+    action: ChatUserActions;
+    reportOption?: ChatReportUserOptions;
+  }
+
   type BackgroundMessage =
     RegisterInterceptorMsg | RegisterClientMsg | processJsonMsg |
     setInitialDataMsg | updatePlayerProgressMsg | setThemeMsg | getThemeMsg |
-    RegisterYtcInterceptorMsg | sendLtlMessageMsg;
+    RegisterYtcInterceptorMsg | sendLtlMessageMsg | executeChatActionMsg | chatUserActionResponse;
 
   type Port = Omit<chrome.runtime.Port, 'postMessage' | 'onMessage'> & {
     postMessage: (message: BackgroundMessage | BackgroundResponse) => void;

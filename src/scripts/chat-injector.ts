@@ -1,7 +1,7 @@
 import HcButton from '../components/HyperchatButton.svelte';
-import { getFrameInfoAsync, isValidFrameInfo, frameIsReplay } from '../ts/chat-utils';
+import { getFrameInfoAsync, isValidFrameInfo, frameIsReplay, checkInjected } from '../ts/chat-utils';
 import { isLiveTL, isAndroid } from '../ts/chat-constants';
-import { hcEnabled } from '../ts/storage';
+import { hcEnabled, autoLiveChat } from '../ts/storage';
 
 // const isFirefox = navigator.userAgent.includes('Firefox');
 
@@ -12,10 +12,7 @@ const hcWarning = 'An existing HyperChat button has been detected. This ' +
   'problems such as chat messages not loading.';
 
 const chatLoaded = async (): Promise<void> => {
-  if (document.querySelector('.toggleButton')) {
-    console.error(hcWarning);
-    return;
-  }
+  if (!isLiveTL && checkInjected(hcWarning)) return;
 
   document.body.style.minWidth = document.body.style.minHeight = '0px';
   const hyperChatEnabled = await hcEnabled.get();
@@ -85,10 +82,21 @@ const chatLoaded = async (): Promise<void> => {
     if (!inputPanel) return;
     (inputPanel as HTMLElement).style.display = 'none';
   }
+
+  if (await autoLiveChat.get()) {
+    const live = document.querySelector<HTMLElement>('tp-yt-paper-listbox#menu > :nth-child(2)');
+    if (!live) {
+      console.error('Failed to find Live Chat menu item');
+      return;
+    }
+    live.click();
+  }
 };
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => async () => await chatLoaded());
+if (isLiveTL) {
+  chatLoaded().catch(console.error);
 } else {
-  chatLoaded().catch(e => console.error(e));
+  setTimeout(() => {
+    chatLoaded().catch(console.error);
+  }, 500);
 }
